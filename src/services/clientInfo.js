@@ -1,5 +1,22 @@
-import geoip from "geoip-country";
+import fs from "node:fs";
+import { createRequire } from "node:module";
 import Bowser from "bowser";
+
+// geoip-country reads its .dat files from disk when it loads. On Vercel those files are only in the function bundle if the
+// bundler can see them, so (1) reference them statically below as a tracing hint and (2) load the package defensively:
+// if the data is missing the app still runs and country is simply "Unknown" instead of every request failing with ENOENT.
+const geoipDataHint = [
+  new URL("../../node_modules/geoip-country/data/geoip-country.dat", import.meta.url),
+  new URL("../../node_modules/geoip-country/data/geoip-country6.dat", import.meta.url),
+];
+void fs.existsSync(geoipDataHint[0]);
+
+let geoip = null;
+try {
+  geoip = createRequire(import.meta.url)("geoip-country");
+} catch (e) {
+  console.error(`[geoip] country lookup disabled: ${e.message}`);
+}
 
 const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
 
@@ -13,7 +30,7 @@ function normalizeIp(ip) {
 }
 
 function countryFor(ip) {
-  const hit = ip ? geoip.lookup(ip) : null;
+  const hit = ip && geoip ? geoip.lookup(ip) : null;
   if (!hit?.country) return { country: "", countryName: "Unknown" };
   let countryName = hit.country;
   try {
