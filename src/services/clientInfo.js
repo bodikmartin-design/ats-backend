@@ -1,4 +1,11 @@
-import geoip from "geoip-country";
+// geoip-country reads its .dat file from disk the moment it is imported. On Vercel that file may not be bundled, so load it
+// defensively: on Vercel the country comes from the x-vercel-ip-country header instead, and this is only the fallback.
+let geoip = null;
+try {
+  geoip = (await import("geoip-country")).default;
+} catch (e) {
+  console.warn(`[geoip] country database unavailable (${e.code || e.message}); using the platform country header only.`);
+}
 import Bowser from "bowser";
 
 const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
@@ -12,16 +19,23 @@ function normalizeIp(ip) {
   return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
 }
 
-function countryFor(ip) {
-  const hit = ip ? geoip.lookup(ip) : null;
-  if (!hit?.country) return { country: "", countryName: "Unknown" };
-  let countryName = hit.country;
+function countryFor(ip, headerCountry) {
+  let code = /^[A-Za-z]{2}$/.test(headerCountry || "") ? headerCountry.toUpperCase() : "";
+  if (!code && ip && geoip) {
+    try {
+      code = geoip.lookup(ip)?.country || "";
+    } catch {
+      /* no database, no country */
+    }
+  }
+  if (!code) return { country: "", countryName: "Unknown" };
+  let countryName = code;
   try {
-    countryName = regionNames.of(hit.country) || hit.country;
+    countryName = regionNames.of(code) || code;
   } catch {
     /* keep the code */
   }
-  return { country: hit.country, countryName };
+  return { country: code, countryName };
 }
 
 /** Only keep the fields we expect from the browser, trimmed, so the DB can't be stuffed with junk. */
@@ -87,11 +101,12 @@ function readSignals(req, reported) {
     chPlatform: clip(req.get("sec-ch-ua-platform"), 40),
     chPlatformVersion: clip(req.get("sec-ch-ua-platform-version"), 40),
     chMobile: clip(req.get("sec-ch-ua-mobile"), 8),
+    geoCountry: clip(req.get("x-vercel-ip-country"), 2),
   };
 }
 
 function buildClient(ip, signals, reported) {
-  const { country, countryName } = countryFor(ip);
+  const { country, countryName } = countryFor(ip, signals.geoCountry);
   const parsed = Bowser.parse(signals.userAgent);
 
   // --- browser
