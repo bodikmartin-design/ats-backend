@@ -63,6 +63,26 @@ if (config.forceHttps) {
   });
 }
 
+// Liveness probe: answers 200 as long as the process is up and the event loop is running.
+// Deliberately does NOT touch the database -- it stays "healthy" during startup and while the
+// DB is briefly unreachable, so a load balancer / orchestrator won't kill a container that is
+// merely waiting for Postgres. Use /readyz (below) if you want a dependency-aware check.
+app.get("/healthy", (_req, res) => {
+  res.status(200).json({ status: "ok", uptime: process.uptime() });
+});
+
+// Readiness probe: only 200 when the database is reachable and the schema is prepared.
+// Kept separate from /healthy so a slow/absent DB doesn't make a perfectly fine process look dead.
+app.get("/readyz", async (_req, res) => {
+  try {
+    await ensureReady();
+    res.status(200).json({ status: "ready" });
+  } catch (err) {
+    console.error("[readyz]", err);
+    res.status(503).json({ status: "not_ready", error: "database unreachable" });
+  }
+});
+
 // The visitor's real address when the request came through the candidate site's /api proxy (see middleware/clientip.js)
 app.use(trustedClientIp);
 
